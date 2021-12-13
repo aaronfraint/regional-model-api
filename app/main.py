@@ -1,8 +1,9 @@
 import os
 from dotenv import find_dotenv, load_dotenv
 
-from typing import Optional, List
+from typing import List
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 from .database import postgis_query_to_geojson, sql_query_raw
 
@@ -14,6 +15,14 @@ URL_PREFIX = os.getenv("URL_PREFIX", "")
 
 app = FastAPI(docs_url=URL_PREFIX)
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 # @app.get(URL_PREFIX + "/zone-ids")
 # async def zone_names_with_list_of_taz_ids():

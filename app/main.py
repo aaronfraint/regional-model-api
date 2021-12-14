@@ -67,9 +67,10 @@ async def get_flows(q: List[int] = Query(None)):
 
     query = f"""
         with trips as (
-            select tozone, mat2150 
+            select tozone, sum(mat2150) as mat2150
             from data.existing_od_transit_auto
             where fromzone::int in {queried_ids}
+            group by tozone
         )
         select
             s.tazt,

@@ -1,5 +1,6 @@
 import os
 from dotenv import find_dotenv, load_dotenv
+import asyncpg
 
 from typing import List
 from fastapi import FastAPI, Query
@@ -67,20 +68,19 @@ async def get_flows(q: List[int] = Query(None)):
 
     query = f"""
         with trips as (
-            select tozone, sum(mat2150) as mat2150
-            from data.existing_od_transit_auto
-            where fromzone::int in {queried_ids}
-            group by tozone
+            select destzoneno, sum(odtrips) as odtrips
+            from existing_2019am_rr_to_dest_zone_fullpath
+            where origzoneno in {queried_ids} and pathlegindex = '0'
+            group by destzoneno
         )
         select
             s.tazt,
             st_transform(s.geom, 4326) as geometry,
-            t.mat2150 as total_trips,
+            t.odtrips as total_trips,
             st_area(s.geom) as shape_area,
-            t.mat2150 / st_area(s.geom) as trip_density
+            t.odtrips / st_area(s.geom) as trip_density
         from data.taz_2010 as s
-        inner join trips t on s.tazt = t.tozone
-        order by mat2150 desc
+        inner join trips t on s.tazt = t.destzoneno::text
     """
 
     return await postgis_query_to_geojson(
@@ -88,3 +88,32 @@ async def get_flows(q: List[int] = Query(None)):
         ["tazt", "geometry", "total_trips", "shape_area", "trip_density"],
         DATABASE_URL,
     )
+
+
+@app.get(URL_PREFIX + "/new-taz-group/")
+async def define_new_group_of_tazs(
+    q: List[int] = Query(None),
+    zone_name: str = Query(None),
+):
+    """
+    Add one or many new rows to the 'zones' table.
+    This table defines which TAZs belong to a given 'destination',
+    which is comprised of a group of TAZs.
+
+    TODO: return geojson of newest destination layer?
+    """
+
+    print(zone_name)
+    print(q)
+    values = [(zone_name, str(tazid)) for tazid in q]
+
+    conn = await asyncpg.connect(DATABASE_URL)
+
+    await conn.executemany(
+        """
+        INSERT INTO public.zones(zone_name, tazt) VALUES($1, $2)
+    """,
+        values,
+    )
+
+    await conn.close()

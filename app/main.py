@@ -88,7 +88,7 @@ async def get_flows(dest_name: str = Query(None)):
                 from existing_2019am_rr_to_dest_zone_fullpath
                 where destzoneno in (
                     select tazt::int from zones
-                    where zone_name = 'Voorhees'
+                    where zone_name = '{dest_name}'
                 )
                 and pathlegindex = '0'
                 group by origzoneno

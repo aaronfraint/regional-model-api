@@ -56,27 +56,61 @@ async def zone_shapes():
 
 
 @app.get(URL_PREFIX + "/flows/")
-async def get_flows(q: List[int] = Query(None)):
-    if len(q) == 1:
-        queried_ids = f"({q[0]})"
-    else:
-        queried_ids = tuple(q)
+async def get_flows(dest_name: str = Query(None)):
+    """
+    For a given destination name:
+        - see if the table has already been computed
+        - if so, return the pre-computed result quickly
+        - if not, compute it and then return the result
+    """
+
+    computed_tables_query = await sql_query_raw(
+        f"""
+        SELECT tablename
+        FROM pg_catalog.pg_tables
+        WHERE schemaname = 'computed'
+    """,
+        DATABASE_URL,
+    )
+
+    computed_tables = [x[0] for x in computed_tables_query]
+
+    dest_name_clean = (
+        dest_name.replace(" ", "_").replace("-", "_").replace(r"/", "_").replace(r"\\", "_").lower()
+    )
+
+    if "d_" + dest_name_clean not in computed_tables:
+        compute_table_query = f"""
+            create table computed.d_{dest_name_clean} as
+
+            with trips as (
+                select origzoneno, sum(odtrips) as odtrips
+                from existing_2019am_rr_to_dest_zone_fullpath
+                where destzoneno in (
+                    select tazt::int from zones
+                    where zone_name = 'Voorhees'
+                )
+                and pathlegindex = '0'
+                group by origzoneno
+            )
+            select
+                s.tazt,
+                st_transform(s.geom, 4326) as geometry,
+                t.odtrips as total_trips,
+                st_area(s.geom) as shape_area,
+                t.odtrips / st_area(s.geom) as trip_density
+            from data.taz_2010 as s
+            inner join trips t on s.tazt::int = t.origzoneno
+         """
+
+        conn = await asyncpg.connect(DATABASE_URL)
+
+        await conn.execute(compute_table_query)
+
+        await conn.close()
 
     query = f"""
-        with trips as (
-            select destzoneno, sum(odtrips) as odtrips
-            from existing_2019am_rr_to_dest_zone_fullpath
-            where origzoneno in {queried_ids} and pathlegindex = '0'
-            group by destzoneno
-        )
-        select
-            s.tazt,
-            st_transform(s.geom, 4326) as geometry,
-            t.odtrips as total_trips,
-            st_area(s.geom) as shape_area,
-            t.odtrips / st_area(s.geom) as trip_density
-        from data.taz_2010 as s
-        inner join trips t on s.tazt = t.destzoneno::text
+        SELECT * FROM computed.d_{dest_name_clean}
     """
 
     return await postgis_query_to_geojson(

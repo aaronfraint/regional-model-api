@@ -5,6 +5,7 @@ import asyncpg
 from typing import List
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from .database import postgis_query_to_geojson, sql_query_raw
 
@@ -21,42 +22,37 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
-# @app.get(URL_PREFIX + "/zone-ids")
-# async def zone_names_with_list_of_taz_ids():
-#     """
-#     This route provides the name of each zone,
-#     along with a list of TAZ IDs that belong
-#     to that zone
-#     """
-#     query = """
-#         select
-#             zone_name,
-#             array_agg(tazt) as taz_list
-#         from
-#             zones
-#         group by
-#             zone_name
-#     """
-#     return await sql_query_raw(query, DATABASE_URL)
+
+class NewZone(BaseModel):
+    zone_name: str
+    tazt: List[str]
 
 
-# @app.get(URL_PREFIX + "/zone-geoms")
-# async def zone_shapes():
-#     """
-#     This route provides a geojson of TAZ shapes with ID
-#     """
-#     query = """
-#         select
-#             tazt,
-#             st_transform(geom, 4326) as geometry
-#         from
-#             taz_2010
-#     """
-#     return await postgis_query_to_geojson(query, ["tazt", "geometry"], DATABASE_URL)
+@app.get(URL_PREFIX + "/zone-names")
+async def zone_names_with_list_of_taz_ids():
+    """
+    This route provides the name of each zone
+    """
+    query = """
+        select distinct zone_name from zones
+    """
+    return await sql_query_raw(query, DATABASE_URL)
+
+
+@app.get(URL_PREFIX + "/zone-geoms")
+async def zone_shapes():
+    """
+    This route provides a geojson of TAZ groups
+    """
+
+    query = """
+        select zone_name, geom as geometry from zone_shapes
+    """
+    return await postgis_query_to_geojson(query, ["zone_name", "geometry"], DATABASE_URL)
 
 
 @app.get(URL_PREFIX + "/flows/")
@@ -90,22 +86,18 @@ async def get_flows(q: List[int] = Query(None)):
     )
 
 
-@app.get(URL_PREFIX + "/new-taz-group/")
-async def define_new_group_of_tazs(
-    q: List[int] = Query(None),
-    zone_name: str = Query(None),
-):
+@app.post(URL_PREFIX + "/new-taz-group/")
+async def define_new_group_of_tazs(new_zone: NewZone):
     """
     Add one or many new rows to the 'zones' table.
     This table defines which TAZs belong to a given 'destination',
     which is comprised of a group of TAZs.
 
-    TODO: return geojson of newest destination layer?
     """
 
-    print(zone_name)
-    print(q)
-    values = [(zone_name, str(tazid)) for tazid in q]
+    zone_name = new_zone.zone_name
+
+    values = [(zone_name, str(tazid)) for tazid in new_zone.tazt]
 
     conn = await asyncpg.connect(DATABASE_URL)
 
@@ -117,3 +109,5 @@ async def define_new_group_of_tazs(
     )
 
     await conn.close()
+
+    return {"data": new_zone}

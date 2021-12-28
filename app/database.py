@@ -56,7 +56,6 @@ async def sql_query_raw(query: str, uri: str):
     conn = await asyncpg.connect(uri)
 
     try:
-        print("trying...")
         result = await conn.fetch(query)
 
     finally:

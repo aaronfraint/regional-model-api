@@ -20,7 +20,10 @@ app = FastAPI(docs_url=URL_PREFIX)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://regional-rail.dev.dvrpc.org"],
+    allow_origins=[
+        "https://regional-rail.dev.dvrpc.org",
+        "http://regional-rail.dev.dvrpc.org",
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],

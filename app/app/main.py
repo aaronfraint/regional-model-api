@@ -32,7 +32,7 @@ class NewZone(BaseModel):
     tazt: List[str]
 
 
-@app.get(URL_PREFIX + "/zone-names")
+@app.get(URL_PREFIX + "/zone-names", tags=["zones"])
 async def zone_names_with_list_of_taz_ids():
     """
     This route provides the name of each zone
@@ -43,7 +43,7 @@ async def zone_names_with_list_of_taz_ids():
     return await sql_query_raw(query, DATABASE_URL)
 
 
-@app.get(URL_PREFIX + "/zone-geoms")
+@app.get(URL_PREFIX + "/zone-geoms", tags=["zones"])
 async def zone_shapes():
     """
     This route provides a geojson of TAZ groups
@@ -55,7 +55,7 @@ async def zone_shapes():
     return await postgis_query_to_geojson(query, ["zone_name", "geometry"], DATABASE_URL)
 
 
-@app.get(URL_PREFIX + "/flows/")
+@app.get(URL_PREFIX + "/flows/", tags=["flows"])
 async def get_flows(dest_name: str = Query(None)):
     """
     For a given destination name:
@@ -120,7 +120,7 @@ async def get_flows(dest_name: str = Query(None)):
     )
 
 
-@app.post(URL_PREFIX + "/new-taz-group/")
+@app.post(URL_PREFIX + "/new-taz-group/", tags=["zones"])
 async def define_new_group_of_tazs(new_zone: NewZone):
     """
     Add one or many new rows to the 'zones' table.

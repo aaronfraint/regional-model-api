@@ -4,4 +4,4 @@ API backend that plugs into a database containing outputs from DVRPC's regional 
 
 ## Local development
 
-Run the API with: `uvicorn app.main:app`
+Run the API with: `uvicorn app.app.main:app`

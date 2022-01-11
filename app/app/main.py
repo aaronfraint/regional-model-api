@@ -135,6 +135,37 @@ async def get_flows(dest_name: str = Query(None)):
     )
 
 
+@app.get(URL_PREFIX + "/demographic-flows/", tags=["flows"])
+async def get_flows_by_demographic(
+    dest_name: str = Query(None),
+    demo_type: str = Query("bucket_pct_non_english"),
+    metric_column: str = Query("total_trips"),
+):
+    """
+    For a given destination name, summarize the results by demographic bucket
+    """
+
+    dest_name_clean = (
+        dest_name.replace(" ", "_").replace("-", "_").replace(r"/", "_").replace(r"\\", "_").lower()
+    )
+
+    sql_tablename = f"computed.d_{dest_name_clean}"
+
+    query = f"""
+        select
+            {demo_type},
+            sum({metric_column}) as trip_sum
+        from {sql_tablename}
+        group by {demo_type}
+        order by {demo_type}
+    """
+
+    return await sql_query_raw(
+        query,
+        DATABASE_URL,
+    )
+
+
 @app.post(URL_PREFIX + "/new-taz-group/", tags=["zones"])
 async def define_new_group_of_tazs(new_zone: NewZone):
     """

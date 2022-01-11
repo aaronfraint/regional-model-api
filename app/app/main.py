@@ -92,15 +92,22 @@ async def get_flows(dest_name: str = Query(None)):
                 )
                 and pathlegindex = '0'
                 group by origzoneno
+            ),
+            joined_data as (
+                select
+                    s.tazt,
+                    st_transform(s.geom, 4326) as geometry,
+                    t.odtrips as total_trips,
+                    st_area(s.geom) as shape_area,
+                    t.odtrips / st_area(s.geom) as trip_density
+                from data.taz_2010 as s
+                inner join trips t on s.tazt::int = t.origzoneno
             )
-            select
-                s.tazt,
-                st_transform(s.geom, 4326) as geometry,
-                t.odtrips as total_trips,
-                st_area(s.geom) as shape_area,
-                t.odtrips / st_area(s.geom) as trip_density
-            from data.taz_2010 as s
-            inner join trips t on s.tazt::int = t.origzoneno
+            select 
+                j.*,
+                s.pct_non_english, s.bucket_pct_non_english
+            from joined_data j
+            left join ctpp.summary s on j.tazt = s.taz_id::text
          """
 
         conn = await asyncpg.connect(DATABASE_URL)

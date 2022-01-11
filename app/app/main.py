@@ -122,7 +122,15 @@ async def get_flows(dest_name: str = Query(None)):
 
     return await postgis_query_to_geojson(
         query,
-        ["tazt", "geometry", "total_trips", "shape_area", "trip_density"],
+        [
+            "tazt",
+            "geometry",
+            "total_trips",
+            "shape_area",
+            "trip_density",
+            "pct_non_english",
+            "bucket_pct_non_english",
+        ],
         DATABASE_URL,
     )
 

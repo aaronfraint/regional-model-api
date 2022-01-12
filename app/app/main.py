@@ -1,14 +1,14 @@
 import os
 from dotenv import find_dotenv, load_dotenv
 import asyncpg
-
+from asyncio import sleep
 from typing import List
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .database import postgis_query_to_geojson, sql_query_raw
-
+from .queries import SQL_COMPUTE_ZONES
 
 load_dotenv(find_dotenv())
 
@@ -55,13 +55,43 @@ async def zone_shapes():
     return await postgis_query_to_geojson(query, ["zone_name", "geometry"], DATABASE_URL)
 
 
-@app.get(URL_PREFIX + "/flows/", tags=["flows"])
-async def get_flows(dest_name: str = Query(None)):
+def turn_zone_name_into_sql_string(zone_name: str) -> str:
+
+    sql_name = zone_name.lower()
+
+    for char in [
+        " ",
+        "-",
+        r"/",
+        r"\\",
+        "(",
+        ")",
+    ]:
+        sql_name = sql_name.replace(char, "_")
+
+    return sql_name
+
+
+async def compute_zone_table(zone_name: str) -> None:
     """
-    For a given destination name:
-        - see if the table has already been computed
-        - if so, return the pre-computed result quickly
-        - if not, compute it and then return the result
+    Use the SQL_COMPUTE_ZONES template to generate a
+    summary table for the provided `zone_name`.
+    """
+
+    sql_name = turn_zone_name_into_sql_string(zone_name)
+
+    compute_table_query = SQL_COMPUTE_ZONES.replace(
+        "NEW_TABLENAME", f"computed.d_{sql_name}"
+    ).replace("ZONE_NAME_STRING", zone_name)
+
+    conn = await asyncpg.connect(DATABASE_URL)
+    await conn.execute(compute_table_query)
+    await conn.close()
+
+
+async def the_table_does_not_exist(zone_name: str):
+    """
+    Confirm if a given `zone_name` has finished computing
     """
 
     computed_tables_query = await sql_query_raw(
@@ -75,49 +105,27 @@ async def get_flows(dest_name: str = Query(None)):
 
     computed_tables = [x[0] for x in computed_tables_query]
 
-    dest_name_clean = (
-        dest_name.replace(" ", "_").replace("-", "_").replace(r"/", "_").replace(r"\\", "_").lower()
-    )
+    sql_name = turn_zone_name_into_sql_string(zone_name)
 
-    if "d_" + dest_name_clean not in computed_tables:
-        compute_table_query = f"""
-            create table computed.d_{dest_name_clean} as
+    return f"d_{sql_name}" not in computed_tables
 
-            with trips as (
-                select origzoneno, sum(odtrips) as odtrips
-                from existing_2019am_rr_to_dest_zone_fullpath
-                where destzoneno in (
-                    select tazt::int from zones
-                    where zone_name = '{dest_name}'
-                )
-                and pathlegindex = '0'
-                group by origzoneno
-            ),
-            joined_data as (
-                select
-                    s.tazt,
-                    st_transform(s.geom, 4326) as geometry,
-                    t.odtrips as total_trips,
-                    st_area(s.geom) as shape_area,
-                    t.odtrips / st_area(s.geom) as trip_density
-                from data.taz_2010 as s
-                inner join trips t on s.tazt::int = t.origzoneno
-            )
-            select 
-                j.*,
-                s.pct_non_english, s.bucket_pct_non_english
-            from joined_data j
-            left join ctpp.summary s on j.tazt = s.taz_id::text
-         """
 
-        conn = await asyncpg.connect(DATABASE_URL)
+@app.get(URL_PREFIX + "/flows/", tags=["flows"])
+async def get_flows(dest_name: str = Query(None)):
+    """
+    For a given destination name, wait until the
+    summary table has been computed and then return
+    it as a geojson
+    """
 
-        await conn.execute(compute_table_query)
+    # wait until the computed table exists
+    while await the_table_does_not_exist(dest_name):
+        await sleep(1)
 
-        await conn.close()
+    sql_name = turn_zone_name_into_sql_string(dest_name)
 
     query = f"""
-        SELECT * FROM computed.d_{dest_name_clean}
+        SELECT * FROM computed.d_{sql_name}
     """
 
     return await postgis_query_to_geojson(
@@ -142,14 +150,17 @@ async def get_flows_by_demographic(
     metric_column: str = Query("total_trips"),
 ):
     """
-    For a given destination name, summarize the results by demographic bucket
+    For a given destination name, wait until the summary table
+    is computed and then summarize the results by demographic bucket
     """
 
-    dest_name_clean = (
-        dest_name.replace(" ", "_").replace("-", "_").replace(r"/", "_").replace(r"\\", "_").lower()
-    )
+    # wait until the computed table exists
+    while await the_table_does_not_exist(dest_name):
+        await sleep(1)
 
-    sql_tablename = f"computed.d_{dest_name_clean}"
+    sql_name = turn_zone_name_into_sql_string(dest_name)
+
+    sql_tablename = f"computed.d_{sql_name}"
 
     query = f"""
         select
@@ -167,7 +178,7 @@ async def get_flows_by_demographic(
 
 
 @app.post(URL_PREFIX + "/new-taz-group/", tags=["zones"])
-async def define_new_group_of_tazs(new_zone: NewZone):
+async def define_new_group_of_tazs(new_zone: NewZone, background_tasks: BackgroundTasks):
     """
     Add one or many new rows to the 'zones' table.
     This table defines which TAZs belong to a given 'destination',
@@ -175,19 +186,21 @@ async def define_new_group_of_tazs(new_zone: NewZone):
 
     """
 
+    # prepare the data to save to db as a list of tuples
     zone_name = new_zone.zone_name
-
     values = [(zone_name, str(tazid)) for tazid in new_zone.tazt]
 
+    # insert a row for each selected TAZ
     conn = await asyncpg.connect(DATABASE_URL)
-
     await conn.executemany(
         """
         INSERT INTO public.zones(zone_name, tazt) VALUES($1, $2)
     """,
         values,
     )
-
     await conn.close()
+
+    # kick off the background process of computing the table for this zone
+    background_tasks.add_task(compute_zone_table, zone_name)
 
     return {"data": new_zone}
